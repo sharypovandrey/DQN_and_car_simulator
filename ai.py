@@ -20,6 +20,11 @@ class Network(nn.Module):
         super(Network, self).__init__()
         self.input_size = input_size
         self.nb_action = nb_action
+        self.cnn1 = nn.Conv2d(1, 8, 3, 2, bias=False)
+        self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        self.cnn2 = nn.Conv2d(8, 16, 3, 2, bias=False)
+        self.cnn3 = nn.Conv2d(16, 32, 3, 2, bias=False)
+        self.cnn4 = nn.Conv2d(32, 64, 3, 1, bias=False)
         self.fc1 = nn.Linear(input_size, 64)
         self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 16)
