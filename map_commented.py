@@ -1,10 +1,14 @@
 # Self Driving Car
-
+# RUN TENSORBOARD
+# tensorboard --logdir runs --port 6006
+# UPDATE TENSORBOARD FASTER
+# setInterval(function() {document.getElementById('reload-button').click()}, 3000);
 # Importing the libraries
 import numpy as np
 from random import random, randint
 import matplotlib.pyplot as plt
 import time
+import os
 
 # Importing the Kivy packages
 from kivy.app import App
@@ -18,6 +22,7 @@ from kivy.clock import Clock
 
 # Importing the Dqn object from our AI in ia.py
 from ai import Dqn
+from tensorboardX import SummaryWriter
 
 # Adding this line if we don't want the right click to put a red point
 Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
@@ -27,9 +32,10 @@ last_x = 0
 last_y = 0
 n_points = 0 # the total number of points in the last drawing
 length = 0 # the length of the last drawing
+start = time.time()
 
 # Getting our AI, which we call "brain", and that contains our neural network that represents our Q-function
-brain = Dqn(7,3,0.9) # 5 sensors, 3 actions, gama = 0.9
+brain = Dqn(10,3,0.9) # 5 sensors, 3 actions, gama = 0.9
 action2rotation = [0,20,-20] # action = 0 => no rotation, action = 1 => rotate 20 degres, action = 2 => rotate -20 degres
 last_reward = 0 # initializing the last reward
 scores = [] # initializing the mean score curve (sliding window of the rewards) with respect to time
@@ -40,13 +46,21 @@ def init():
     global sand # sand is an array that has as many cells as our graphic interface has pixels. Each cell has a one if there is sand, 0 otherwise.
     global goal_x # x-coordinate of the goal (where the car has to go, that is the airport or the downtown)
     global goal_y # y-coordinate of the goal (where the car has to go, that is the airport or the downtown)
-    sand = np.zeros((longueur,largeur)) # initializing the sand array with only zeros
+    global first_update
+    if os.path.exists('sand.txt'):
+        print("YES")
+        sand = np.loadtxt('sand.txt', dtype=int)
+    else:
+        sand = np.zeros((longueur,largeur)) # initializing the sand array with only zeros
     goal_x = 20 # the goal to reach is at the upper left of the map (the x-coordinate is 20 and not 0 because the car gets bad reward if it touches the wall)
     goal_y = largeur - 20 # the goal to reach is at the upper left of the map (y-coordinate)
     first_update = False # trick to initialize the map only once
 
 # Initializing the last distance
 last_distance = 0
+
+
+writer = SummaryWriter()
 
 # Creating the car class (to understand "NumericProperty" and "ReferenceListProperty", see kivy tutorials: https://kivy.org/docs/tutorials/pong.html)
 
@@ -102,11 +116,10 @@ class Game(Widget):
     ball1 = ObjectProperty(None) # getting the sensor 1 object from our kivy file
     ball2 = ObjectProperty(None) # getting the sensor 2 object from our kivy file
     ball3 = ObjectProperty(None) # getting the sensor 3 object from our kivy file
-    start = time.time()
 
     def serve_car(self): # starting the car when we launch the application
         self.car.center = self.center # the car will start at the center of the map
-        self.car.velocity = Vector(6, 0) # the car will start to go horizontally to the right with a speed of 6
+        self.car.velocity = Vector(2, 0) # the car will start to go horizontally to the right with a speed of 6
 
     def update(self, dt): # the big update function that updates everything that needs to be updated at each discrete time t when reaching a new state (getting new signals from the sensors)
 
@@ -124,16 +137,13 @@ class Game(Widget):
         if first_update: # trick to initialize the map only once
             init()
 
-        timer = time.time() - self.start
-
-        if timer > 10:
-            last_reward -= timer * 0.01
+        global start 
+        current_time = time.time() - start
 
         xx = goal_x - self.car.x # difference of x-coordinates between the goal and the car
         yy = goal_y - self.car.y # difference of y-coordinates between the goal and the car
         orientation = Vector(*self.car.velocity).angle((xx,yy))/180. # direction of the car with respect to the goal (if the car is heading perfectly towards the goal, then orientation = 0)
-        distance_before_rot = np.sqrt((self.car.x - goal_x)**2 + (self.car.y - goal_y)**2)
-        last_signal = [self.car.signal1, self.car.signal2, self.car.signal3, orientation, -orientation, 1 / distance_before_rot, 1 / timer] # our input state vector, composed of the three signals received by the three sensors, plus the orientation and -orientation
+        last_signal = [self.car.signal1, self.car.signal2, self.car.signal3, orientation, -orientation, goal_x, goal_y, 1 / abs(xx), 1 / abs(yy), 1 / current_time] # our input state vector, composed of the three signals received by the three sensors, plus the orientation and -orientation
         action = brain.update(last_reward, last_signal) # playing the action from our ai (the object brain of the dqn class)
         scores.append(brain.score()) # appending the score (mean of the last 100 rewards to the reward window)
         rotation = action2rotation[action] # converting the action played (0, 1 or 2) into the rotation angle (0°, 20° or -20°)
@@ -143,41 +153,46 @@ class Game(Widget):
         self.ball2.pos = self.car.sensor2 # updating the position of the second sensor (ball2) right after the car moved
         self.ball3.pos = self.car.sensor3 # updating the position of the third sensor (ball3) right after the car moved
 
+        self.car.velocity = Vector(6, 0).rotate(self.car.angle) # it goes to a normal speed (speed = 6)
+        last_reward = -0.01 # and it gets bad reward (-0.2)
+        # if distance < last_distance: # however if it getting close to the goal
+        #     last_reward = 0.1 # it still gets slightly positive reward 0.1
+
         if sand[int(self.car.x),int(self.car.y)] > 0: # if the car is on the sand
             self.car.velocity = Vector(1, 0).rotate(self.car.angle) # it is slowed down (speed = 1)
-            last_reward = -1 # and reward = -1
-        else: # otherwise
-            self.car.velocity = Vector(6, 0).rotate(self.car.angle) # it goes to a normal speed (speed = 6)
-            last_reward = -0.2 # and it gets bad reward (-0.2)
-            if distance < last_distance: # however if it getting close to the goal
-                last_reward = 0.1 # it still gets slightly positive reward 0.1
+            last_reward = -3 # and reward = -1
 
         if self.car.x < 10: # if the car is in the left edge of the frame
             self.car.x = 10 # it is not slowed down
-            last_reward = -1 # but it gets bad reward -1
+            last_reward = -3 # but it gets bad reward -1
         if self.car.x > self.width-10: # if the car is in the right edge of the frame
             self.car.x = self.width-10 # it is not slowed down
-            last_reward = -1 # but it gets bad reward -1
+            last_reward = -3 # but it gets bad reward -1
         if self.car.y < 10: # if the car is in the bottom edge of the frame
             self.car.y = 10 # it is not slowed down
-            last_reward = -1 # but it gets bad reward -1
+            last_reward = -3 # but it gets bad reward -1
         if self.car.y > self.height-10: # if the car is in the upper edge of the frame
             self.car.y = self.height-10 # it is not slowed down
-            last_reward = -1 # but it gets bad reward -1
+            last_reward = -3 # but it gets bad reward -1
 
         if distance < 100: # when the car reaches its goal
             goal_x = self.width - goal_x # the goal becomes the bottom right corner of the map (the downtown), and vice versa (updating of the x-coordinate of the goal)
             goal_y = self.height - goal_y # the goal becomes the bottom right corner of the map (the downtown), and vice versa (updating of the y-coordinate of the goal)
-            self.start = time.time()
-        
-        # Updating the la:
-        # last_reward += timerance from the car to the goal
+            last_reward += 20
+            # global start
+            start = time.time()
+
+        if current_time > 25:
+            last_reward += -current_time * 0.01
+
+        # Updating the last distance from the car to the goal
         last_distance = distance
-        print(f"""
-        last_reward {last_reward}
-        distance {distance}
-        timer {timer}
-        """)
+
+        writer.add_scalar('data/current_time', current_time)
+        writer.add_scalar('data/distance', distance)
+        writer.add_scalar('data/last_reward', last_reward)
+        # writer.export_scalars_to_json("./all_scalars.json")
+
 # Painting for graphic interface (see kivy tutorials: https://kivy.org/docs/tutorials/firstwidget.html)
 
 class MyPaintWidget(Widget):
@@ -217,16 +232,22 @@ class CarApp(App):
         parent.serve_car()
         Clock.schedule_interval(parent.update, 1.0 / 60.0)
         self.painter = MyPaintWidget()
-        clearbtn = Button(text='clear')
-        savebtn = Button(text='save',pos=(parent.width,0))
-        loadbtn = Button(text='load',pos=(2*parent.width,0))
-        clearbtn.bind(on_release=self.clear_canvas)
-        savebtn.bind(on_release=self.save)
-        loadbtn.bind(on_release=self.load)
+        clear_btn = Button(text='clear')
+        save_btn = Button(text='save',pos=(parent.width,0))
+        load_btn = Button(text='load',pos=(2*parent.width,0))
+        save_sand_btn = Button(text='save sand',pos=(3*parent.width,0))
+        load_sand_btn = Button(text='load sand',pos=(4*parent.width,0))
+        clear_btn.bind(on_release=self.clear_canvas)
+        save_btn.bind(on_release=self.save)
+        load_btn.bind(on_release=self.load)
+        save_sand_btn.bind(on_release=self.save_sand)
+        load_sand_btn.bind(on_release=self.load_sand)
         parent.add_widget(self.painter)
-        parent.add_widget(clearbtn)
-        parent.add_widget(savebtn)
-        parent.add_widget(loadbtn)
+        parent.add_widget(clear_btn)
+        parent.add_widget(save_btn)
+        parent.add_widget(load_btn)
+        parent.add_widget(save_sand_btn)
+        parent.add_widget(load_sand_btn)
         return parent
 
     def clear_canvas(self, obj): # clear button
@@ -243,6 +264,15 @@ class CarApp(App):
     def load(self, obj): # load button
         print("loading last saved brain...")
         brain.load()
+
+    def save_sand(self, obj): # load button
+        global sand
+        np.savetxt('sand.txt', sand, fmt='%d')
+
+    def load_sand(self, obj): # load button
+        print("loading sand...")
+        global sand
+        sand = np.loadtxt('sand.txt', dtype=int)
 
 # Running the app
 if __name__ == '__main__':
